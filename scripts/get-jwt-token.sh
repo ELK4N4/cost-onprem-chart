@@ -1,6 +1,17 @@
 #!/bin/bash
 # Script to get a JWT token that is valid for Envoy
 # This token can be used to authenticate requests to the Envoy proxy
+#
+# Environment Variables:
+#   TOKEN_EXPIRATION - Requested token expiration in seconds (default: 315360000 = 10 years)
+#                      Note: Keycloak will enforce its configured maximum expiration
+#   KEYCLOAK_NAMESPACE - Namespace where Keycloak is deployed (default: keycloak)
+#   REALM - Keycloak realm name (default: kubernetes)
+#   CLIENT_ID - Keycloak client ID (default: cost-management-operator)
+#
+# To generate tokens without expiration, configure Keycloak:
+#   1. Realm Settings > Tokens > Access Token Lifespan (set to maximum)
+#   2. Or Client Settings > Advanced > Access Token Lifespan (overrides realm setting)
 
 set -euo pipefail
 
@@ -104,6 +115,13 @@ fi
 # Step 3: Get JWT Token
 echo_info "Step 3: Requesting JWT token from Keycloak..."
 
+# Note: Token expiration is controlled by Keycloak server configuration.
+# To generate tokens without expiration (or with very long expiration),
+# you need to configure the Keycloak realm or client settings:
+# - Realm Settings > Tokens > Access Token Lifespan
+# - Client Settings > Advanced > Access Token Lifespan
+# This script requests a maximum expiration, but Keycloak will enforce its configured limits.
+
 # Determine token endpoint (RHBK v22+ does not use /auth prefix)
 # Try with /auth first, then without
 token_url_with_auth="$KEYCLOAK_URL/auth/realms/$REALM/protocol/openid-connect/token"
@@ -112,12 +130,19 @@ token_url_no_auth="$KEYCLOAK_URL/realms/$REALM/protocol/openid-connect/token"
 echo_info "Trying token endpoint: $token_url_no_auth"
 echo_info "Client ID: $CLIENT_ID"
 
+# Request a very long expiration (10 years in seconds)
+# Note: Keycloak will enforce its configured maximum, so this may be ignored
+REQUESTED_EXPIRATION="${TOKEN_EXPIRATION:-315360000}"  # Default: 10 years (315360000 seconds)
+echo_info "Requesting token expiration: ${REQUESTED_EXPIRATION} seconds (may be limited by Keycloak configuration)"
+
 # Request JWT token using client credentials flow
+# Some Keycloak versions support 'expires_in' parameter, but it's typically ignored
 token_response=$(curl -s -k -X POST "$token_url_no_auth" \
     -H "Content-Type: application/x-www-form-urlencoded" \
     -d "grant_type=client_credentials" \
     -d "client_id=$CLIENT_ID" \
-    -d "client_secret=$CLIENT_SECRET" 2>/dev/null)
+    -d "client_secret=$CLIENT_SECRET" \
+    -d "expires_in=${REQUESTED_EXPIRATION}" 2>/dev/null)
 
 # If that fails, try with /auth prefix
 if echo "$token_response" | grep -q "404\|Not Found" || [ -z "$token_response" ]; then
@@ -126,7 +151,8 @@ if echo "$token_response" | grep -q "404\|Not Found" || [ -z "$token_response" ]
         -H "Content-Type: application/x-www-form-urlencoded" \
         -d "grant_type=client_credentials" \
         -d "client_id=$CLIENT_ID" \
-        -d "client_secret=$CLIENT_SECRET" 2>/dev/null)
+        -d "client_secret=$CLIENT_SECRET" \
+        -d "expires_in=${REQUESTED_EXPIRATION}" 2>/dev/null)
 fi
 
 # Extract access token
@@ -166,7 +192,19 @@ echo ""
 # Step 4: Display token information
 echo_info "Token Information:"
 echo "  Token length: ${#JWT_TOKEN} characters"
-echo "  Expires in: ${expires_in:-300} seconds"
+if [ "${expires_in:-0}" -gt 0 ]; then
+    expires_days=$((expires_in / 86400))
+    expires_hours=$(((expires_in % 86400) / 3600))
+    echo "  Expires in: ${expires_in} seconds (${expires_days} days, ${expires_hours} hours)"
+    if [ "${expires_in}" -lt "${REQUESTED_EXPIRATION}" ]; then
+        echo_warning "Token expiration (${expires_in}s) is shorter than requested (${REQUESTED_EXPIRATION}s)"
+        echo_warning "This is controlled by Keycloak server configuration. To increase expiration:"
+        echo_warning "  1. Configure Realm Settings > Tokens > Access Token Lifespan"
+        echo_warning "  2. Or configure Client Settings > Advanced > Access Token Lifespan"
+    fi
+else
+    echo_warning "Token expiration not specified in response (may be very long or unlimited)"
+fi
 
 # Decode and display token claims (if jq is available)
 if command -v jq >/dev/null 2>&1; then

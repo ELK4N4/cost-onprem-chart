@@ -179,7 +179,7 @@ spec:
   source:
     create_source: true
     check_cycle: 1440
-    sources_path: "/api/cost-management/v1/sources"
+    sources_path: "/api/cost-management/v1/"
 ```
 
 ### 3. Create Custom CA Bundle Script
