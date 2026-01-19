@@ -381,8 +381,8 @@ upload_test_data() {
             "data_collected": true
         },
         "source": {
-            "sources_path": "/api/sources/v1.0/",
-            "create_source": false,
+            "sources_path": "/api/cost-management/v1/sources",
+            "create_source": true,
             "last_check_time": null,
             "check_cycle": 1440
         },

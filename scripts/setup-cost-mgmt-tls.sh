@@ -817,9 +817,9 @@ spec:
 
   # Source configuration
   source:
-    create_source: false
+    create_source: true
     check_cycle: 1440  # 24 hours
-    sources_path: "/api/sources/v1.0/"
+    sources_path: "/api/cost-management/v1/"
     name: ""
 
   # Packaging configuration

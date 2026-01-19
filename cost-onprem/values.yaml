@@ -153,8 +153,8 @@ costManagement:
     enabled: true
 
     image:
-      repository: quay.io/insights-onprem/koku
-      tag: "postgres"
+      repository: quay.io/ehendler/koku
+      tag: "latest"
       pullPolicy: Always
 
     reads:
