@@ -56,17 +56,13 @@ resources:
       cpu: "1000m"
 
 # Use smaller storage sizes for testing
-# Production recommendation: 100Gi for ros/kruize, 50Gi for sources
+# Production recommendation: 100Gi for ros/kruize
 database:
   ros:
     storage:
       size: "5Gi"
 
   kruize:
-    storage:
-      size: "5Gi"
-
-  sources:
     storage:
       size: "5Gi"
 

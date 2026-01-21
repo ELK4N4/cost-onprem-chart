@@ -1,6 +1,6 @@
 # Sources API Provider Creation Flow
 
-This document describes provider creation using the Sources API, which mirrors Red Hat's production architecture.
+This document describes provider creation using the Sources API in the on-prem deployment.
 
 ## Architecture Overview
 
@@ -11,22 +11,12 @@ This document describes provider creation using the Sources API, which mirrors R
          │ HTTP POST
          ▼
 ┌─────────────────────┐
-│  Sources API (Go)   │ ← External route
+│  Koku API           │ ← /api/cost-management/v1/sources
+│  (Sources API)      │
 └──────────┬──────────┘
-           │ Kafka Publish
-           ▼
-┌─────────────────────┐
-│  Kafka Topic        │
-│  platform.sources.  │
-│  event-stream       │
-└──────────┬──────────┘
-           │ Consume
-           ▼
-┌─────────────────────┐
-│  Sources Listener   │ ← cost-onprem-sources-listener pod
-└──────────┬──────────┘
-           │ ProviderBuilder.create_provider_from_source()
-           ▼
+         │ AdminSourcesSerializer.create()
+         │ ProviderBuilder.create_provider_from_source()
+         ▼
 ┌─────────────────────┐
 │  Tenant Provisioning│
 │  - Create schema    │
@@ -35,78 +25,69 @@ This document describes provider creation using the Sources API, which mirrors R
 └─────────────────────┘
 ```
 
-This is the same flow used by console.redhat.com.
+In the on-prem deployment, source and provider creation happens synchronously in a single API call.
 
 ## Components
 
 | Component | Template | Purpose |
 |-----------|----------|---------|
-| Sources API | `cost-onprem/templates/sources-api/deployment.yaml` | HTTP endpoints for source management |
-| Sources Listener | `cost-onprem/templates/cost-management/sources/deployment-sources-listener.yaml` | Kafka consumer for source events |
-| Sources API Route | `cost-onprem/templates/ingress/routes.yaml` | External HTTP access |
+| Koku API | `cost-onprem/templates/cost-management/api/deployment.yaml` | HTTP endpoints for sources and cost management |
+| Envoy Ingress | `cost-onprem/templates/ingress/` | JWT authentication and routing |
 
-## Sources API Route
+## API Endpoint
 
-The route is defined in `cost-onprem/templates/ingress/routes.yaml`.
-
-Get the route URL:
+Sources API is served by Koku API under `/api/cost-management/v1/`:
 
 ```bash
-SOURCES_API_URL=$(oc get route sources-api -n cost-onprem -o jsonpath='{.spec.host}')
-echo "Sources API: https://$SOURCES_API_URL"
-```
-
-## Sources Listener
-
-The sources listener deployment runs `python manage.py sources_listener` which:
-- Subscribes to `platform.sources.event-stream` Kafka topic
-- Processes source/application create/update/delete events
-- Creates providers via `ProviderBuilder.create_provider_from_source()`
-
-Key environment variables:
-
-| Variable | Value | Purpose |
-|----------|-------|---------|
-| `SOURCES` | `true` | Enables sources listener mode |
-| `KAFKA_CONNECT` | `true` | Enables Kafka connectivity |
-| `SOURCES_API_SVC_HOST` | `<release>-sources-api.<namespace>.svc.cluster.local` | Sources API endpoint |
-| `SOURCES_API_SVC_PORT` | `8000` | Sources API port |
-
-## Testing the Flow
-
-```bash
-# Run E2E test (uses Sources API automatically)
-./scripts/cost-mgmt-ocp-dataflow.sh --namespace cost-onprem
+# Get the route URL
+COST_API_URL=$(oc get route cost-management-api -n cost-onprem -o jsonpath='{.spec.host}')
+echo "Sources API: https://$COST_API_URL/api/cost-management/v1/sources"
 ```
 
 ## Flow Details
 
-1. **E2E test discovers Sources API route**
-
-2. **Creates source via HTTP POST**
+1. **User creates source via HTTP POST**
    ```
-   POST /api/sources/v3.1/sources
-   {"name": "OCP Test Provider", "source_type_id": "3"}
-
-   POST /api/sources/v3.1/applications
-   {"source_id": "123", "application_type_id": "2", "extra": {"bucket": "koku-bucket", "cluster_id": "test-cluster-123"}}
-   ```
-
-3. **Sources API publishes to Kafka**
-   ```
-   Topic: platform.sources.event-stream
-   Event: application.create
+   POST /api/cost-management/v1/sources
+   {
+     "name": "OCP Test Provider",
+     "source_type": "OCP",
+     "authentication": {"credentials": {"cluster_id": "test-cluster-123"}},
+     "billing_source": {"data_source": {"bucket": "koku-bucket"}}
+   }
    ```
 
-4. **Sources Listener consumes message and provisions tenant**
+2. **Koku API processes request synchronously**
+   - `AdminSourcesSerializer.validate()` - validates source data
+   - `Sources.objects.create()` - creates Source record
+   - `ProviderBuilder.create_provider_from_source()` - creates Provider
+   - Links source to provider
 
-5. **Provider created in database**
+3. **Provider available immediately**
+   - No Kafka messaging required
+   - No separate listener component needed
 
-## Comparison: Django ORM vs Sources API
+## Source Deletion
 
-| Aspect | Django ORM (kubectl exec) | Sources API |
-|--------|---------------------------|-------------|
-| Method | Direct database access | HTTP POST |
-| Flow | Bypasses production code | Production code path |
-| Kafka | Not tested | Tested |
-| Listener | Not tested | Tested |
+When a source is deleted:
+
+1. **DELETE /api/cost-management/v1/sources/{id}**
+2. **Koku deletes Provider and Source**
+3. **Koku publishes `Application.destroy` to Kafka** (for ROS cleanup)
+4. **ROS Housekeeper cleans up ROS data**
+
+## Testing
+
+```bash
+# Run E2E test
+./scripts/cost-mgmt-ocp-dataflow.sh --namespace cost-onprem
+```
+
+## Comparison: On-Prem vs SaaS
+
+| Aspect | On-Prem (Koku API) | SaaS (sources-api-go) |
+|--------|--------------------|-----------------------|
+| Source Creation | Synchronous HTTP | Async via Kafka |
+| Provider Creation | Same request | Sources Listener |
+| Kafka Required | Only for ROS cleanup | Full event pipeline |
+| Separate Services | Koku only | sources-api-go + sources-listener |

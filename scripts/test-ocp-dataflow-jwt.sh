@@ -732,8 +732,8 @@ register_ocp_source() {
     echo_info "Cluster ID: $cluster_id"
     echo_info "Org ID: $ORG_ID"
 
-    # Find a pod to execute curl from (use sources-listener or any koku pod)
-    local exec_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/component=sources-listener" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    # Find a pod to execute curl from (use koku-api or listener pod)
+    local exec_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/component=koku-api" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
     if [ -z "$exec_pod" ]; then
         exec_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/component=listener" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
     fi
@@ -758,7 +758,7 @@ register_ocp_source() {
     echo "Step 1: Getting OpenShift source type ID..." >> "$debug_log"
     echo "Request URL: ${SOURCES_API_URL}/source_types" >> "$debug_log"
 
-    local source_types_response=$(oc exec -n "$NAMESPACE" "$exec_pod" -c sources-listener -- \
+    local source_types_response=$(oc exec -n "$NAMESPACE" "$exec_pod" -c koku-api -- \
         curl -s "${SOURCES_API_URL}/source_types" \
         -H "Content-Type: application/json" \
         -H "x-rh-sources-org-id: $ORG_ID" 2>&1)
@@ -794,7 +794,7 @@ register_ocp_source() {
     echo "Step 2: Getting Cost Management application type ID..." >> "$debug_log"
     echo "Request URL: ${SOURCES_API_URL}/application_types" >> "$debug_log"
 
-    local app_types_response=$(oc exec -n "$NAMESPACE" "$exec_pod" -c sources-listener -- \
+    local app_types_response=$(oc exec -n "$NAMESPACE" "$exec_pod" -c koku-api -- \
         curl -s "${SOURCES_API_URL}/application_types" \
         -H "Content-Type: application/json" \
         -H "x-rh-sources-org-id: $ORG_ID" 2>&1)
@@ -838,7 +838,7 @@ EOF
 
     echo "Payload: $create_source_payload" >> "$debug_log"
 
-    local source_response=$(oc exec -n "$NAMESPACE" "$exec_pod" -c sources-listener -- \
+    local source_response=$(oc exec -n "$NAMESPACE" "$exec_pod" -c koku-api -- \
         curl -s -X POST "${SOURCES_API_URL}/sources" \
         -H "Content-Type: application/json" \
         -H "x-rh-sources-org-id: $ORG_ID" \
@@ -878,7 +878,7 @@ EOF
 
     echo "Payload: $auth_payload" >> "$debug_log"
 
-    local auth_response=$(oc exec -n "$NAMESPACE" "$exec_pod" -c sources-listener -- \
+    local auth_response=$(oc exec -n "$NAMESPACE" "$exec_pod" -c koku-api -- \
         curl -s -X POST "${SOURCES_API_URL}/authentications" \
         -H "Content-Type: application/json" \
         -H "x-rh-sources-org-id: $ORG_ID" \
@@ -908,7 +908,7 @@ EOF
 
     echo "Payload: $app_payload" >> "$debug_log"
 
-    local app_response=$(oc exec -n "$NAMESPACE" "$exec_pod" -c sources-listener -- \
+    local app_response=$(oc exec -n "$NAMESPACE" "$exec_pod" -c koku-api -- \
         curl -s -X POST "${SOURCES_API_URL}/applications" \
         -H "Content-Type: application/json" \
         -H "x-rh-sources-org-id: $ORG_ID" \
@@ -937,9 +937,9 @@ EOF
     echo_success "Cost Management application created with ID: $app_id"
     echo "SUCCESS: Cost Management application created with ID: $app_id" >> "$debug_log"
 
-    # Step 6: Wait for Koku to process the source (via Kafka event)
-    # The Sources API publishes to Kafka, then sources-listener creates the provider
-    echo_info "Waiting for Koku to process the new source via Kafka..."
+    # Step 6: Wait for Koku to create the provider (synchronous in on-prem)
+    # In on-prem, the provider is created directly by the API - no Kafka needed
+    echo_info "Waiting for provider to be created in Koku database..."
 
     local db_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/name=database" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
     if [ -z "$db_pod" ]; then
@@ -979,16 +979,16 @@ EOF
         echo "ERROR: Timeout waiting for provider to be created in Koku database" >> "$debug_log"
         echo_error "FATAL: Timeout waiting for provider to be created in Koku database"
         echo_error ""
-        echo_error "Source was created in Sources API but Koku has not processed it yet"
-        echo_error "This indicates an issue with the Kafka event processing pipeline"
+        echo_error "Source was created via Sources API but Provider was not found in database"
+        echo_error "This indicates an issue with the Koku API source/provider creation"
         echo_error ""
         echo_error "Debug log saved to: $debug_log"
         echo ""
         echo_error "Troubleshooting:"
-        echo_error "  1. Check sources-listener logs: kubectl logs -n $NAMESPACE -l app.kubernetes.io/component=sources-listener --tail=50"
-        echo_error "  2. Check Kafka topics: kubectl exec -n $NAMESPACE kafka-0 -- bin/kafka-topics.sh --list --bootstrap-server localhost:9092"
-        echo_error "  3. Verify Kafka is running: kubectl get pods -n $NAMESPACE -l app.kubernetes.io/name=kafka"
-        echo_error "  4. Check Koku database connectivity from sources-listener"
+        echo_error "  1. Check koku-api logs: kubectl logs -n $NAMESPACE -l app.kubernetes.io/component=koku-api --tail=50"
+        echo_error "  2. Check database connectivity: kubectl get pods -n $NAMESPACE -l app.kubernetes.io/name=postgresql"
+        echo_error "  3. Verify Koku API is running: kubectl get pods -n $NAMESPACE -l app.kubernetes.io/component=koku-api"
+        echo_error "  4. Check for validation errors in API response"
         echo_error "  5. Review full debug log: cat $debug_log"
         exit 1
     fi
@@ -1012,14 +1012,14 @@ cleanup_test_source() {
 
     echo_info "Cleaning up test source: $TEST_SOURCE_ID"
 
-    # Find a pod to execute curl from
-    local exec_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/component=sources-listener" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    # Find a pod to execute curl from (use koku-api)
+    local exec_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/component=koku-api" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
     if [ -z "$exec_pod" ]; then
         exec_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/component=listener" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
     fi
 
     if [ -n "$exec_pod" ] && [ -n "$SOURCES_API_URL" ]; then
-        oc exec -n "$NAMESPACE" "$exec_pod" -c sources-listener -- \
+        oc exec -n "$NAMESPACE" "$exec_pod" -c koku-api -- \
             curl -s -X DELETE "${SOURCES_API_URL}/sources/${TEST_SOURCE_ID}" \
             -H "x-rh-sources-org-id: $ORG_ID" 2>/dev/null || true
         echo_info "Test source deleted"

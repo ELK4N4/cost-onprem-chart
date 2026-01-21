@@ -609,8 +609,8 @@ except Exception as e:
         if not provider_uuid:
             raise RuntimeError(
                 f"Provider not created within timeout. Check:\n"
-                f"  1. Sources Listener logs: oc logs -n {self.k8s.namespace if self.k8s else 'cost-onprem'} -l app.kubernetes.io/component=sources-listener\n"
-                f"  2. Kafka messages: oc exec -n kafka kafka-pod -- bin/kafka-console-consumer.sh --topic platform.sources.event-stream\n"
+                f"  1. Koku API logs: oc logs -n {self.k8s.namespace if self.k8s else 'cost-onprem'} -l app.kubernetes.io/component=koku-api\n"
+                f"  2. Database connectivity and source record creation\n"
             )
 
         return provider_uuid

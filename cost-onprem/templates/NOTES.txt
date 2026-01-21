@@ -36,7 +36,7 @@ Get Main Route URL:
 API Endpoints:
   - ROS API: /api/ros/*
   - Kruize API: /api/kruize/*
-  - Sources API: /api/sources/*
+  - Cost Management API: /api/cost-management/*
   - Upload API: /api/ingress/*
 
 Health Check:
@@ -56,7 +56,7 @@ API Endpoints:
   - Health: http://localhost:{{ .Values.ingress.service.nodePort }}/ready
   - ROS API: http://localhost:{{ .Values.ingress.service.nodePort }}/api/ros/*
   - Kruize: http://localhost:{{ .Values.ingress.service.nodePort }}/api/kruize/*
-  - Sources: http://localhost:{{ .Values.ingress.service.nodePort }}/api/sources/*
+  - Cost Management: http://localhost:{{ .Values.ingress.service.nodePort }}/api/cost-management/*
   - Upload: http://localhost:{{ .Values.ingress.service.nodePort }}/api/ingress/*
 {{- else }}
 Port Forward:

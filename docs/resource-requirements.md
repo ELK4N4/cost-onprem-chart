@@ -345,10 +345,8 @@ The authoritative resource configuration is defined in the Koku repository:
 
 #### Sources Integration
 
-| Component | SaaS CPU Req | SaaS Mem Req | SaaS CPU Lim | SaaS Mem Lim | Replicas |
-|-----------|--------------|--------------|--------------|--------------|----------|
-| **sources-client** | 50m | 650Mi | 100m | 768Mi | 1 |
-| **sources-listener** | 100m | 250Mi | 200m | 500Mi | 1 |
+In on-prem, sources functionality is integrated directly into the Koku API.
+There are no separate sources-client or sources-listener components.
 
 ### Required Helm Chart Changes
 

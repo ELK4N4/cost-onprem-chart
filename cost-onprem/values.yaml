@@ -3,8 +3,7 @@
 # =============================================================================
 # This chart deploys the complete Cost Management on-premise solution:
 # - ROS (Resource Optimization Service)
-# - Cost Management Service (future)
-# - Sources API
+# - Cost Management Service (Koku)
 # - Shared infrastructure (PostgreSQL, Kafka, Redis/Valkey, MinIO/ODF)
 #
 # Naming conventions:
@@ -31,6 +30,9 @@ global:
   # "odf" for OpenShift, "minio" for Kubernetes
   storageType: ""
 
+  # Kafka topic for sources event stream
+  platformSourcesEventStreamTopic: "platform.sources.event-stream"
+
   # Init container images (shared across all services)
   # Using alternative registries to avoid docker.io rate limits
   initContainers:
@@ -55,7 +57,7 @@ ros:
   # All ROS services (api, processor, recommendationPoller, housekeeper, partitionCleaner)
   # use the same image
   image:
-    repository: quay.io/insights-onprem/ros-ocp-backend
+    repository: quay.io/ehendler/ros-ocp-backend
     tag: "latest"
     pullPolicy: Always
 
@@ -719,22 +721,6 @@ kruize:
         cpu: "300m"
 
 # -----------------------------------------------------------------------------
-# Sources API (Top-level Service - Shared by ROS and Cost Management)
-# -----------------------------------------------------------------------------
-sourcesApi:
-  image:
-    repository: quay.io/insights-onprem/sources-api-go
-    tag: "latest"
-    pullPolicy: Always
-
-  port: 8000
-  logLevel: DEBUG
-  bypassRbac: true
-  sourcesEnv: prod
-  encryptionKey: YWFhYWFhYWFhYWFhYWFhYQ
-  platformSourcesEventStreamTopic: platform.sources.event-stream
-
-# -----------------------------------------------------------------------------
 # Ingress Service (Shared entry point for uploads and routing)
 # -----------------------------------------------------------------------------
 # Uses insights-ingress-go which requires INGRESS_* prefixed environment variables
@@ -792,7 +778,7 @@ ingress:
 # Shared Infrastructure - Database (Unified PostgreSQL for all services)
 # -----------------------------------------------------------------------------
 # Unified PostgreSQL server for all on-prem services
-# Single StatefulSet hosts separate databases: ros_db, kruize_db, koku, sources
+# Single StatefulSet hosts separate databases: ros_db, kruize_db, koku
 #
 # Security Model:
 # - Each service gets its own dedicated database and user
@@ -846,14 +832,6 @@ database:
     # Dedicated user for Koku service (only used if existingSecret is empty)
     user: koku
     password: koku_password
-
-  # Sources Database Configuration
-  sources:
-    # Database name on the unified server (dedicated database for Sources API)
-    name: sources
-    # Dedicated user for Sources service (only used if existingSecret is empty)
-    user: sources
-    password: sources_password
 
 # -----------------------------------------------------------------------------
 # Shared Infrastructure - Kafka

@@ -54,7 +54,7 @@ app.kubernetes.io/part-of: {{ include "cost-onprem.name" . }}
 
 {{/*
 Database host resolver - returns unified database service name if "internal", otherwise returns the configured host
-Since all databases (ros, kruize, sources) are on the same unified server, this returns a single common host.
+Since all databases (ros, kruize, koku) are on the same unified server, this returns a single common host.
 Usage: {{ include "cost-onprem.database.host" . }}
 */}}
 {{- define "cost-onprem.database.host" -}}
@@ -78,14 +78,6 @@ Get the kruize database host - returns unified database service name (alias for 
 */}}
 {{- define "cost-onprem.kruize.databaseHost" -}}
 {{- include "cost-onprem.database.host" . -}}
-{{- end }}
-
-{{/*
-Get the sources database host - now returns infra chart's PostgreSQL host
-Sources API shares the koku database with Koku because Sources provisions tables that Koku uses
-*/}}
-{{- define "cost-onprem.sources.databaseHost" -}}
-{{- include "cost-onprem.koku.database.host" . -}}
 {{- end }}
 
 {{/*
@@ -139,12 +131,6 @@ Usage: {{ include "cost-onprem.database.kruize.password" . }}
 {{- define "cost-onprem.database.kruize.password" -}}
 {{- .Values.database.kruize.password -}}
 {{- end }}
-
-{{/*
-NOTE: Sources API now uses the infra chart's PostgreSQL (shares koku database)
-because Sources API provisions tables that Koku uses.
-Sources credentials are in the postgres-credentials secret from the infra chart.
-*/}}
 
 {{/*
 Detect if running on OpenShift by checking for OpenShift-specific API resources

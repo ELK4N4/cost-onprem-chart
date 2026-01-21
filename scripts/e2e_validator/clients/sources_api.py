@@ -77,11 +77,11 @@ class SourcesAPIClient:
 
         # Execute curl from within the cluster using kubectl exec
         if self.k8s_client:
-            # Find a pod to execute from (preferably sources-listener)
-            pod_name = self.k8s_client.get_pod_by_component('sources-listener')
+            # Find a pod to execute from (preferably koku-api)
+            pod_name = self.k8s_client.get_pod_by_component('koku-api')
             if not pod_name:
-                # Fallback to any running pod
-                pod_name = self.k8s_client.get_pod_by_component('koku-api')
+                # Fallback to listener pod
+                pod_name = self.k8s_client.get_pod_by_component('listener')
 
             if not pod_name:
                 raise RuntimeError("No suitable pod found to execute curl from")
