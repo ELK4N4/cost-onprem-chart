@@ -724,19 +724,16 @@ register_ocp_source() {
 
     echo_info "=== Registering OCP Source via Sources API ==="
 
-    # Get Sources API service URL (internal cluster service)
-    local sources_svc="${HELM_RELEASE_NAME}-sources-api.${NAMESPACE}.svc.cluster.local:8000"
-    SOURCES_API_URL="http://${sources_svc}/api/sources/v1.0"
+    # Get Sources API service URL (internal cluster service) - now via Koku API
+    local sources_svc="${HELM_RELEASE_NAME}-koku-api.${NAMESPACE}.svc.cluster.local:8000"
+    SOURCES_API_URL="http://${sources_svc}/api/cost-management/v1"
 
     echo_info "Sources API URL: $SOURCES_API_URL"
     echo_info "Cluster ID: $cluster_id"
     echo_info "Org ID: $ORG_ID"
 
-    # Find a pod to execute curl from (use sources-listener or any koku pod)
-    local exec_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/component=sources-listener" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-    if [ -z "$exec_pod" ]; then
-        exec_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/component=listener" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-    fi
+    # Find a pod to execute curl from (use cost-management-api pod)
+    local exec_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/component=cost-management-api" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
     if [ -z "$exec_pod" ]; then
         echo_error "No suitable pod found to execute Sources API calls"
         return 1
@@ -758,10 +755,15 @@ register_ocp_source() {
     echo "Step 1: Getting OpenShift source type ID..." >> "$debug_log"
     echo "Request URL: ${SOURCES_API_URL}/source_types" >> "$debug_log"
 
-    local source_types_response=$(oc exec -n "$NAMESPACE" "$exec_pod" -c sources-listener -- \
+    # Create x-rh-identity header (base64 encoded JSON with full identity structure)
+    # Must include entitlements.cost_management.is_entitled for Koku access
+    local identity_json="{\"identity\":{\"org_id\":\"$ORG_ID\",\"account_number\":\"$ORG_ID\",\"type\":\"User\",\"user\":{\"username\":\"test\",\"email\":\"test@example.com\",\"is_org_admin\":true}},\"entitlements\":{\"cost_management\":{\"is_entitled\":true}}}"
+    local identity_header=$(echo -n "$identity_json" | base64 | tr -d '\n')
+
+    local source_types_response=$(oc exec -n "$NAMESPACE" "$exec_pod" -c koku-api -- \
         curl -s "${SOURCES_API_URL}/source_types" \
         -H "Content-Type: application/json" \
-        -H "x-rh-sources-org-id: $ORG_ID" 2>&1)
+        -H "x-rh-identity: $identity_header" 2>&1)
 
     echo "Response: $source_types_response" >> "$debug_log"
     echo "" >> "$debug_log"
@@ -780,8 +782,8 @@ register_ocp_source() {
         echo_error "Debug log saved to: $debug_log"
         echo ""
         echo_error "Troubleshooting:"
-        echo_error "  1. Verify Sources API is running: kubectl get pods -n $NAMESPACE -l app.kubernetes.io/component=sources-api"
-        echo_error "  2. Check Sources API logs: kubectl logs -n $NAMESPACE -l app.kubernetes.io/component=sources-api"
+        echo_error "  1. Verify Koku API is running: kubectl get pods -n $NAMESPACE -l app.kubernetes.io/component=cost-management-api"
+        echo_error "  2. Check Koku API logs: kubectl logs -n $NAMESPACE -l app.kubernetes.io/component=cost-management-api"
         echo_error "  3. Verify network connectivity from $exec_pod"
         echo_error "  4. Review full debug log: cat $debug_log"
         exit 1
@@ -794,10 +796,10 @@ register_ocp_source() {
     echo "Step 2: Getting Cost Management application type ID..." >> "$debug_log"
     echo "Request URL: ${SOURCES_API_URL}/application_types" >> "$debug_log"
 
-    local app_types_response=$(oc exec -n "$NAMESPACE" "$exec_pod" -c sources-listener -- \
+    local app_types_response=$(oc exec -n "$NAMESPACE" "$exec_pod" -c koku-api -- \
         curl -s "${SOURCES_API_URL}/application_types" \
         -H "Content-Type: application/json" \
-        -H "x-rh-sources-org-id: $ORG_ID" 2>&1)
+        -H "x-rh-identity: $identity_header" 2>&1)
 
     echo "Response: $app_types_response" >> "$debug_log"
     echo "" >> "$debug_log"
@@ -816,8 +818,8 @@ register_ocp_source() {
         echo_error "Debug log saved to: $debug_log"
         echo ""
         echo_error "Troubleshooting:"
-        echo_error "  1. Verify Sources API is running: kubectl get pods -n $NAMESPACE -l app.kubernetes.io/component=sources-api"
-        echo_error "  2. Check Sources API logs: kubectl logs -n $NAMESPACE -l app.kubernetes.io/component=sources-api"
+        echo_error "  1. Verify Koku API is running: kubectl get pods -n $NAMESPACE -l app.kubernetes.io/component=cost-management-api"
+        echo_error "  2. Check Koku API logs: kubectl logs -n $NAMESPACE -l app.kubernetes.io/component=cost-management-api"
         echo_error "  3. Verify application types are seeded in database"
         echo_error "  4. Review full debug log: cat $debug_log"
         exit 1
@@ -838,10 +840,10 @@ EOF
 
     echo "Payload: $create_source_payload" >> "$debug_log"
 
-    local source_response=$(oc exec -n "$NAMESPACE" "$exec_pod" -c sources-listener -- \
+    local source_response=$(oc exec -n "$NAMESPACE" "$exec_pod" -c koku-api -- \
         curl -s -X POST "${SOURCES_API_URL}/sources" \
         -H "Content-Type: application/json" \
-        -H "x-rh-sources-org-id: $ORG_ID" \
+        -H "x-rh-identity: $identity_header" \
         -d "$create_source_payload" 2>&1)
 
     echo "Response: $source_response" >> "$debug_log"
@@ -858,8 +860,8 @@ EOF
         echo_error "Debug log saved to: $debug_log"
         echo ""
         echo_error "Troubleshooting:"
-        echo_error "  1. Verify Sources API is running: kubectl get pods -n $NAMESPACE -l app.kubernetes.io/component=sources-api"
-        echo_error "  2. Check Sources API logs: kubectl logs -n $NAMESPACE -l app.kubernetes.io/component=sources-api"
+        echo_error "  1. Verify Koku API is running: kubectl get pods -n $NAMESPACE -l app.kubernetes.io/component=cost-management-api"
+        echo_error "  2. Check Koku API logs: kubectl logs -n $NAMESPACE -l app.kubernetes.io/component=cost-management-api"
         echo_error "  3. Verify source type ID '$ocp_source_type_id' is valid"
         echo_error "  4. Review full debug log: cat $debug_log"
         exit 1
@@ -878,10 +880,10 @@ EOF
 
     echo "Payload: $auth_payload" >> "$debug_log"
 
-    local auth_response=$(oc exec -n "$NAMESPACE" "$exec_pod" -c sources-listener -- \
+    local auth_response=$(oc exec -n "$NAMESPACE" "$exec_pod" -c koku-api -- \
         curl -s -X POST "${SOURCES_API_URL}/authentications" \
         -H "Content-Type: application/json" \
-        -H "x-rh-sources-org-id: $ORG_ID" \
+        -H "x-rh-identity: $identity_header" \
         -d "$auth_payload" 2>&1)
 
     echo "Response: $auth_response" >> "$debug_log"
@@ -908,10 +910,10 @@ EOF
 
     echo "Payload: $app_payload" >> "$debug_log"
 
-    local app_response=$(oc exec -n "$NAMESPACE" "$exec_pod" -c sources-listener -- \
+    local app_response=$(oc exec -n "$NAMESPACE" "$exec_pod" -c koku-api -- \
         curl -s -X POST "${SOURCES_API_URL}/applications" \
         -H "Content-Type: application/json" \
-        -H "x-rh-sources-org-id: $ORG_ID" \
+        -H "x-rh-identity: $identity_header" \
         -d "$app_payload" 2>&1)
 
     echo "Response: $app_response" >> "$debug_log"
@@ -930,16 +932,16 @@ EOF
         echo_error "Troubleshooting:"
         echo_error "  1. Verify source ID '$TEST_SOURCE_ID' is valid"
         echo_error "  2. Verify application type ID '$cost_mgmt_app_type_id' is valid"
-        echo_error "  3. Check Sources API logs: kubectl logs -n $NAMESPACE -l app.kubernetes.io/component=sources-api"
+        echo_error "  3. Check Koku API logs: kubectl logs -n $NAMESPACE -l app.kubernetes.io/component=cost-management-api"
         echo_error "  4. Review full debug log: cat $debug_log"
         exit 1
     fi
     echo_success "Cost Management application created with ID: $app_id"
     echo "SUCCESS: Cost Management application created with ID: $app_id" >> "$debug_log"
 
-    # Step 6: Wait for Koku to process the source (via Kafka event)
-    # The Sources API publishes to Kafka, then sources-listener creates the provider
-    echo_info "Waiting for Koku to process the new source via Kafka..."
+    # Step 6: Wait for Koku to process the source
+    # The Koku API creates the provider directly in the database
+    echo_info "Waiting for Koku to process the new source..."
 
     local db_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/name=database" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
     if [ -z "$db_pod" ]; then
@@ -985,10 +987,10 @@ EOF
         echo_error "Debug log saved to: $debug_log"
         echo ""
         echo_error "Troubleshooting:"
-        echo_error "  1. Check sources-listener logs: kubectl logs -n $NAMESPACE -l app.kubernetes.io/component=sources-listener --tail=50"
+        echo_error "  1. Check Koku API logs: kubectl logs -n $NAMESPACE -l app.kubernetes.io/component=cost-management-api --tail=50"
         echo_error "  2. Check Kafka topics: kubectl exec -n $NAMESPACE kafka-0 -- bin/kafka-topics.sh --list --bootstrap-server localhost:9092"
         echo_error "  3. Verify Kafka is running: kubectl get pods -n $NAMESPACE -l app.kubernetes.io/name=kafka"
-        echo_error "  4. Check Koku database connectivity from sources-listener"
+        echo_error "  4. Check Koku database connectivity"
         echo_error "  5. Review full debug log: cat $debug_log"
         exit 1
     fi
@@ -1012,16 +1014,18 @@ cleanup_test_source() {
 
     echo_info "Cleaning up test source: $TEST_SOURCE_ID"
 
-    # Find a pod to execute curl from
-    local exec_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/component=sources-listener" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-    if [ -z "$exec_pod" ]; then
-        exec_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/component=listener" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-    fi
+    # Find a pod to execute curl from (use cost-management-api pod)
+    local exec_pod=$(oc get pods -n "$NAMESPACE" -l "app.kubernetes.io/component=cost-management-api" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
 
     if [ -n "$exec_pod" ] && [ -n "$SOURCES_API_URL" ]; then
-        oc exec -n "$NAMESPACE" "$exec_pod" -c sources-listener -- \
+        # Create x-rh-identity header (base64 encoded JSON with full identity structure)
+        # Must include entitlements.cost_management.is_entitled for Koku access
+        local identity_json="{\"identity\":{\"org_id\":\"$ORG_ID\",\"account_number\":\"$ORG_ID\",\"type\":\"User\",\"user\":{\"username\":\"test\",\"email\":\"test@example.com\",\"is_org_admin\":true}},\"entitlements\":{\"cost_management\":{\"is_entitled\":true}}}"
+        local identity_header=$(echo -n "$identity_json" | base64 | tr -d '\n')
+
+        oc exec -n "$NAMESPACE" "$exec_pod" -c koku-api -- \
             curl -s -X DELETE "${SOURCES_API_URL}/sources/${TEST_SOURCE_ID}" \
-            -H "x-rh-sources-org-id: $ORG_ID" 2>/dev/null || true
+            -H "x-rh-identity: $identity_header" 2>/dev/null || true
         echo_info "Test source deleted"
     fi
 
